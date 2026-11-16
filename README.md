@@ -60,14 +60,62 @@ Overrides: `YBC_APP_DIR` (installation), `YBC_DATA_DIR` (user data), `YBC_CONFIG
 
 Both `cursor-agent-exec` and `cursor-local-agent-runtime` are patched. Patching checks JavaScript syntax with `node --check` when Node.js is available and restores the affected file if that check fails. A patch failure prevents provider activation.
 
-## Build
+## Lines the patch changes
 
-```powershell
-cargo build --release --offline
+Both bundles get the same edits; only the minified variable names differ:
+
+- `resources\app\extensions\cursor-agent-exec\dist\main.js`
+- `resources\app\extensions\cursor-local-agent-runtime\dist\main.js`
+
+Diffs below come from `cursor-agent-exec` (variables `r`/`w`; the other uses `n`/`y`). The files are minified single lines; they are wrapped here for reading only.
+
+Protocol fallback branch (the host comes from the selected provider URL):
+
+```diff
+-return r.includes("codex")?"responses":"chat_completions"
++return r.includes("codex")||(t??"").includes("api.example.com")?"responses":"chat_completions"
 ```
 
-Output: `target\release\ybc.exe`.
+Reasoning-effort matcher (`--effort-scope all`, the default):
 
-## License
+```diff
+-if(/^gpt-5(?:\.\d+)?$/u.test(t))return w
++return w
+```
 
-[BSD 3-Clause](LICENSE).
+With `--effort-scope prefix`:
+
+```diff
++if(/^gpt-5(?:\.\d+)?$/u.test(t)||/^(?:glm|kimi|deepseek|hy|minimax|mimo|step|space-bunny)/u.test(t))return w
+```
+
+With `--effort-exclude "gemini|grok"`:
+
+```diff
++if(!/^(?:gemini|grok)/u.test(t))return w
+```
+
+Removing the `api_types` precondition:
+
+```diff
+-return!0===e.extendedCapabilitiesDetected?t.effort:void 0
++return t.effort
+```
+
+Call site:
+
+```diff
+-return v(e.id)}(e)
++return w}(e)
+```
+
+Tiers change only with `--effort-values`:
+
+```diff
+-values:["low","medium","high","xhigh"]
++values:["none","low","medium","high","xhigh","max"]
+```
+
+Untouched: `output_config.effort` (Anthropic), `minimal`-based `reasoning_effort` (Grok), `product.json`, the workbench bundle, and the `/models` probing logic.
+
+`product.json` checksums do not cover `extensions/*`, so editing these two bundles does not trip an integrity check.
