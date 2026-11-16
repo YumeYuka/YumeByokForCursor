@@ -1,6 +1,6 @@
 //! 路径解析：全部支持环境变量覆盖，便于测试与非常规安装。
 
-use std::path::{Path, PathBuf};
+use std::{hash::{Hash, Hasher}, path::{Path, PathBuf}};
 
 #[derive(Debug, Clone)]
 pub struct Paths {
@@ -15,12 +15,27 @@ pub struct Paths {
 }
 
 impl Paths {
-    pub fn resolve() -> Result<Self, String> {
+    pub fn resolve(for_patch: bool) -> Result<Self, String> {
         let local = env_path("LOCALAPPDATA").ok_or("无法读取 LOCALAPPDATA")?;
         let roaming = env_path("APPDATA").ok_or("无法读取 APPDATA")?;
         let home = env_path("USERPROFILE").ok_or("无法读取 USERPROFILE")?;
 
-        let app_dir = env_path("YBC_APP_DIR").unwrap_or_else(|| local.join("Programs").join("cursor"));
+        let app_dir = match env_path("YBC_APP_DIR") {
+            Some(path) => path,
+            None if !for_patch => local.join("Programs").join("cursor"),
+            None => {
+                let running = crate::processes::cursor_processes()
+                    .into_iter().filter_map(|process| process.app_dir).collect();
+                let installed = [
+                    Some(local.join("Programs").join("cursor")),
+                    env_path("ProgramW6432").map(|dir| dir.join("cursor")),
+                    env_path("ProgramFiles").map(|dir| dir.join("cursor")),
+                    env_path("ProgramFiles(x86)").map(|dir| dir.join("cursor")),
+                ].into_iter().flatten().collect();
+                select_app_dir(running, installed)?
+                    .unwrap_or_else(|| local.join("Programs").join("cursor"))
+            }
+        };
         let data_dir = env_path("YBC_DATA_DIR").unwrap_or_else(|| roaming.join("Cursor Private Inference"));
         let config_dir = env_path("YBC_CONFIG_DIR")
             .or_else(|| env_path("XDG_CONFIG_HOME").map(|dir| dir.join("ybc")))
@@ -45,7 +60,10 @@ impl Paths {
     }
 
     pub fn js_backup_dir(&self) -> PathBuf {
-        self.config_dir.join("js-backups")
+        // 两份安装不能共用备份，否则 revert 会恢复另一份安装的 bundle。
+        let mut hash = std::collections::hash_map::DefaultHasher::new();
+        path_key(&self.app_dir).hash(&mut hash);
+        self.config_dir.join("js-backups").join(format!("{:016x}", hash.finish()))
     }
 
     pub fn db_backup_dir(&self) -> PathBuf {
@@ -72,6 +90,32 @@ impl Paths {
     pub fn executable(&self) -> PathBuf {
         self.app_dir.join("Cursor Private Inference.exe")
     }
+}
+
+fn path_key(path: &Path) -> String {
+    path.to_string_lossy().replace('/', "\\").trim_end_matches('\\').to_lowercase()
+}
+
+fn select_app_dir(running: Vec<PathBuf>, installed: Vec<PathBuf>) -> Result<Option<PathBuf>, String> {
+    for candidates in [running, installed] {
+        let mut found: Vec<PathBuf> = Vec::new();
+        for path in candidates {
+            if path.join("resources").join("app").is_dir()
+                && !found.iter().any(|other| path_key(other) == path_key(&path))
+            {
+                found.push(path);
+            }
+        }
+        match found.len() {
+            0 => continue,
+            1 => return Ok(found.pop()),
+            _ => return Err(format!(
+                "检测到多份 Cursor 安装，请设置 $env:YBC_APP_DIR 指定目标目录：\n{}",
+                found.iter().map(|path| path.display().to_string()).collect::<Vec<_>>().join("\n")
+            )),
+        }
+    }
+    Ok(None)
 }
 
 #[derive(Debug, Clone)]
@@ -138,5 +182,28 @@ mod tests {
     fn swap_backslashes() {
         let uri = to_file_uri(Path::new(r"D:\x\y.vscdb"), false);
         assert!(uri.starts_with("file:D:/x/y.vscdb?mode=rw"));
+    }
+
+    #[test]
+    fn selects_running_system_install_and_keeps_backups_separate() {
+        let root = std::env::temp_dir().join(format!("ybc-paths-{}", std::process::id()));
+        let user = root.join("user");
+        let system = root.join("system");
+        for dir in [&user, &system] {
+            std::fs::create_dir_all(dir.join("resources/app")).unwrap();
+        }
+        let installed = vec![user.clone(), system.clone()];
+        assert_eq!(select_app_dir(vec![system.clone(), system.clone()], installed.clone()).unwrap(), Some(system.clone()));
+        assert_eq!(select_app_dir(vec![], vec![system.clone()]).unwrap(), Some(system.clone()));
+        assert_eq!(select_app_dir(vec![], vec![user.clone()]).unwrap(), Some(user.clone()));
+        assert!(select_app_dir(vec![], installed.clone()).unwrap_err().contains("YBC_APP_DIR"));
+        assert!(select_app_dir(installed.clone(), installed).is_err());
+        assert_eq!(select_app_dir(vec![], vec![root.join("missing")]).unwrap(), None);
+
+        let mut paths = Paths { app_dir: user, data_dir: root.clone(), config_dir: root.clone(), state_db: None };
+        let user_backup = paths.js_backup_dir();
+        paths.app_dir = system;
+        assert_ne!(user_backup, paths.js_backup_dir());
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

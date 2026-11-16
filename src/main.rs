@@ -8,6 +8,7 @@ mod crypto;
 mod db;
 mod patch;
 mod paths;
+mod processes;
 mod providers;
 
 use std::process::ExitCode;
@@ -20,16 +21,16 @@ const USAGE: &str = "\
 ybc - Cursor BYOK 辅助工具
 
 供应商（日常用这两个）:
-  ybc set --base-url <url> --api-key <key> [name]   设置并立即生效
+  ybc set --base-url <url> --api-key <key> [name]   设置供应商并自动打全部补丁
   ybc set --base-url <url>                          只换端点，Key 沿用上次
   ybc set [name] --api-key <key>                    只换 Key
-  ybc use <name>                                    切到已保存的供应商
+  ybc use <name>                                    切换供应商并自动打全部补丁
   ybc list                                          当前配置 + 所有供应商
   ybc show <name>                                   看单个供应商
   ybc add <name> --base-url <url> [--api-key <key>] 只存不进 Cursor
   ybc remove <name>                                 删掉
 
-补丁（安装或升级 Cursor 后跑一次）:
+补丁（可选，set / use 已自动处理）:
   ybc apply                                         打全部补丁
   ybc status                                        看补丁状态
   ybc revert                                        还原
@@ -76,7 +77,7 @@ fn main() -> ExitCode {
 fn run(args: &[String]) -> Result<(), String> {
     let command = args[0].as_str();
     let flags = Flags::parse(&args[1..])?;
-    let paths = Paths::resolve()?;
+    let paths = Paths::resolve(matches!(command, "status" | "apply" | "revert" | "doctor" | "set" | "use"))?;
 
     match command {
         "status" => cmd_status(&paths, &flags),
@@ -156,9 +157,14 @@ fn cmd_status(paths: &Paths, flags: &Flags) -> Result<(), String> {
 fn cmd_apply(paths: &Paths, flags: &Flags) -> Result<(), String> {
     let options = patch_options(flags)?;
     let kinds = PatchKind::parse(flags.value("patch").unwrap_or("all"))?;
-    let backup_dir = paths.js_backup_dir();
-    let patcher = Patcher::new(&options, &backup_dir);
+    apply_patches(paths, &options, &kinds)
+}
 
+fn apply_patches(paths: &Paths, options: &PatchOptions, kinds: &[PatchKind]) -> Result<(), String> {
+    let backup_dir = paths.js_backup_dir();
+    let patcher = Patcher::new(options, &backup_dir);
+
+    println!("安装目录: {}", paths.app_dir.display());
     println!("补丁: {:?}", kinds);
     let mut changed = 0;
     let mut failed = false;
@@ -166,7 +172,7 @@ fn cmd_apply(paths: &Paths, flags: &Flags) -> Result<(), String> {
     for bundle in paths.bundles() {
         println!();
         println!("[{}]", bundle.tag);
-        let outcome = patcher.apply(&bundle, &kinds);
+        let outcome = patcher.apply(&bundle, kinds);
         let _ = outcome.tag;
 
         for note in &outcome.notes {
@@ -200,6 +206,7 @@ fn cmd_revert(paths: &Paths) -> Result<(), String> {
     let backup_dir = paths.js_backup_dir();
     let patcher = Patcher::new(&options, &backup_dir);
 
+    println!("安装目录: {}", paths.app_dir.display());
     let mut restored = 0;
     for bundle in paths.bundles() {
         println!("[{}]", bundle.tag);
@@ -460,7 +467,7 @@ fn cmd_use(paths: &Paths, flags: &Flags) -> Result<(), String> {
     apply_provider(paths, &mut book, &name, &provider, flags)
 }
 
-/// 把供应商真正写进 Cursor 配置，并记为当前激活项。
+/// 按供应商 URL 打全部补丁，再写入 Cursor 配置并记为当前激活项。
 fn apply_provider(
     paths: &Paths,
     book: &mut ProviderBook,
@@ -477,6 +484,10 @@ fn apply_provider(
             ));
         }
     }
+
+    let mut options = patch_options(flags)?;
+    options.host_pattern = host_of(&provider.base_url);
+    apply_patches(paths, &options, &[PatchKind::Protocol, PatchKind::Effort])?;
 
     let report = providers::switch_to(paths, provider, !flags.has("keep-catalog"))?;
 
