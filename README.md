@@ -30,12 +30,6 @@ cargo build --release --offline
 
 Output is `target\release\ybc.exe`, about 510 KB, no network needed.
 
-Prebuilt binaries are attached to [releases](https://github.com/YumeYuka/YumeByokForCursor/releases), each with a `SHA256SUMS.txt`. Check it before running:
-
-```powershell
-Get-FileHash .\ybc-0.1.0-x86_64-pc-windows-msvc.exe -Algorithm SHA256
-```
-
 ## 1. Switch providers (the everyday command)
 
 One command sets it and takes effect immediately — no separate save-then-switch step:
@@ -203,3 +197,7 @@ With `XDG_CONFIG_HOME` set, the config directory becomes `$XDG_CONFIG_HOME\ybc`.
 - A Cursor update overwrites both bundles; run `apply` again afterwards.
 - `status` reporting `unknown` means the anchor no longer matches; nothing is written in that case.
 - `apply` runs `node --check` after writing. On failure the real file is restored and the bad output is kept at `js-backups\main.js.<tag>.failed.js`.
+
+## License
+
+BSD 3-Clause. See [LICENSE](LICENSE).

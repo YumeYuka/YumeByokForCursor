@@ -4,7 +4,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.74"
 description = "Cursor BYOK helper: force Responses protocol, unlock reasoning effort, switch providers"
-license = "MIT"
+license = "BSD-3-Clause"
 
 [[bin]]
 name = "ybc"
