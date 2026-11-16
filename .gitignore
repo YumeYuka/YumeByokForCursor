@@ -5,6 +5,7 @@ target/
 # Local test and temporary output
 /artifacts
 /tmp
+/dist
 *.log
 
 # IDE
