@@ -166,7 +166,20 @@ impl<'a> Patcher<'a> {
             };
         }
 
-        let text = std::fs::read_to_string(&bundle.path).unwrap_or_default();
+        let text = match read_bundle_text(&bundle.path) {
+            Ok(text) => text,
+            Err(_) => {
+                return BundleStatus {
+                    tag: bundle.tag,
+                    path: bundle.path.clone(),
+                    exists: true,
+                    protocol: ProtocolState::Unknown,
+                    effort: EffortState::Unknown,
+                    sha256: None,
+                };
+            }
+        };
+
         BundleStatus {
             tag: bundle.tag,
             path: bundle.path.clone(),
@@ -192,7 +205,7 @@ impl<'a> Patcher<'a> {
             return outcome;
         }
 
-        let original = match std::fs::read_to_string(&bundle.path) {
+        let original = match read_bundle_text(&bundle.path) {
             Ok(text) => text,
             Err(err) => {
                 outcome.error = Some(format!("读取失败: {err}"));
@@ -602,6 +615,25 @@ fn timestamp() -> String {
         .map(|d| d.as_secs())
         .unwrap_or(0);
     format!("{secs}")
+}
+
+/// 一次性读入整个 bundle。
+///
+/// 先按文件长度预留缓冲，避免默认实现那种分段扩容 + 反复重新分配；
+/// 这两个 bundle 分别是 10 MB 和 5 MB，预留能省掉一轮拷贝。
+fn read_bundle_text(path: &Path) -> std::io::Result<String> {
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let size = file.metadata().map(|meta| meta.len()).unwrap_or(0) as usize;
+    let mut bytes = Vec::with_capacity(size + 1);
+    file.read_to_end(&mut bytes)?;
+
+    // bundle 是 UTF-8 无 BOM；损坏时退回宽松解码而不是丢弃内容
+    match String::from_utf8(bytes) {
+        Ok(text) => Ok(text),
+        Err(err) => Ok(String::from_utf8_lossy(err.as_bytes()).into_owned()),
+    }
 }
 
 #[cfg(test)]

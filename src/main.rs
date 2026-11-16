@@ -50,10 +50,15 @@ ybc - Cursor BYOK 辅助工具
   --force                             跳过「Cursor 已退出」检查（危险）
 
   -h, --help                          显示本帮助
+  -V, --version                       显示版本
 ";
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
+    if args.iter().any(|a| a == "-V" || a == "--version") {
+        println!("ybc {} ({})", env!("CARGO_PKG_VERSION"), env!("YBC_TARGET"));
+        return ExitCode::SUCCESS;
+    }
     if args.is_empty() || args.iter().any(|a| a == "-h" || a == "--help") {
         print!("{USAGE}");
         return ExitCode::SUCCESS;
