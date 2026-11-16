@@ -1,0 +1,13 @@
+target/
+**/*.rs.bk
+*.pdb
+
+# Local test and temporary output
+/artifacts
+/tmp
+*.log
+
+# IDE
+/.idea
+/.vscode
+*.user
